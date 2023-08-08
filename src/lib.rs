@@ -1,7 +1,10 @@
-use std:: error::Error;
+use std::error::Error;
 
 use serde::Deserialize;
 use serde::Deserializer;
+use sqlx::Pool;
+use sqlx::Postgres;
+use sqlx::Row;
 
 use std::fs;
 
@@ -20,7 +23,10 @@ impl<'de> Deserialize<'de> for DatabaseType {
         match s.to_lowercase().as_str() {
             "postgres" => Ok(DatabaseType::Postgres),
             "mysql" => Ok(DatabaseType::MySql),
-            _ => Err(serde::de::Error::unknown_variant(&s, &["postgres", "mysql"])),
+            _ => Err(serde::de::Error::unknown_variant(
+                &s,
+                &["postgres", "mysql"],
+            )),
         }
     }
 }
@@ -30,7 +36,6 @@ struct ConfigFileInput {
     database: Option<DatabaseType>,
     database_url: Option<String>,
 }
-
 
 #[derive(Debug)]
 pub struct Config {
@@ -66,4 +71,14 @@ pub fn read_config_file() -> Result<Config, Box<dyn Error>> {
     };
 
     return Ok(Config::new(db, db_url));
+}
+
+pub async fn ping_db(mut pool: &Pool<Postgres>) -> Result<(), Box<dyn Error>> {
+    let result = sqlx::query("SELECT 1 + 1 as sum").fetch_one(pool).await?;
+
+    let s:i32 = result.get("sum");
+
+    dbg!(s);
+
+    Ok(())
 }
