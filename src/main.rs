@@ -17,7 +17,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     
 
-    ping_db(&pool).await?;
+    ping_db(&pool).await.unwrap_or_else(|err|{
+        eprintln!("error connecting to the database {}", err);
+        process::exit(1);
+    });
 
     dbg!(config);
 
