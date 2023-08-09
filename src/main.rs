@@ -2,7 +2,7 @@ use std::error::Error;
 
 use std::{env, process};
 
-use migratour::{create_migration_table, Flags, ping_db, read_config_file, table_exists};
+use migratour::{create_migration_table, Flags, ping_db, read_config_file, table_exists, Command, new_migration};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -14,7 +14,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let mut f = Flags::parse(args).unwrap_or_else(|err| {
-        eprintln!("error parsing flags{}", err);
+        eprintln!("error parsing flags {}", err);
         process::exit(1);
     });
 
@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         });
     }
 
-    dbg!(f.cmd);
+    
     let  pool = sqlx::postgres::PgPool::connect("postgres://kshitij.360one:sVTezMu4E8YG@ep-shy-king-58645115.ap-southeast-1.aws.neon.tech/neondb?sslmode=require").await?;
 
     ping_db(&pool).await.unwrap_or_else(|err| {
@@ -45,11 +45,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
         })
     }
 
-    // let mg_folder_exists = Path::new("./migrations").is_dir();
+    match &f.cmd {
+        Command::New(s )=>{
+            new_migration( &s.clone()).unwrap_or_else(|err|{
+                eprintln!("there is some error in migration files {}",err);
+                process::exit(1)
+            })
+        },
+        _ =>{
 
-    // if !mg_folder_exists{
-
-    // }
+        }
+        
+    }
 
     Ok(())
 }

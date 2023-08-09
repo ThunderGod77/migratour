@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::i32;
-
+use std::path::Path;
 
 use serde::Deserialize;
 use serde::Deserializer;
@@ -116,7 +116,7 @@ pub async fn create_migration_table(pool: &Pool<Postgres>) -> Result<(), Box<dyn
 
     Ok(())
 }
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum Command {
     Up(bool, i32),
     Down(i32),
@@ -127,6 +127,7 @@ impl Default for Command {
         Command::New(String::default())
     }
 }
+
 
 #[derive(Default)]
 pub struct Flags {
@@ -155,7 +156,6 @@ impl Flags {
                 "new" => {
                     if i + 1 < args.len() {
                         let mig_name = args[i + 1].clone();
-                       
 
                         f.cmd = Command::New(mig_name);
                         return Ok(f);
@@ -204,4 +204,66 @@ impl Flags {
 
         return Ok(f);
     }
+}
+
+pub fn new_migration(name: &String) -> Result<(), Box<dyn Error>> {
+    let mg_folder_exists = Path::new("./migrations").is_dir();
+
+    if !mg_folder_exists {
+        fs::create_dir("./migrations")?;
+    }
+
+    let entries = fs::read_dir("./migrations")?;
+
+    let file_names: Vec<String> = entries
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            if path.is_file() {
+                path.file_name()?.to_str().map(|s| s.to_owned())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let file_serial_extracted: Vec<String> = file_names
+        .iter()
+        .map(|s| s.chars().take(4).collect())
+        .collect();
+
+    let mut valid = true;
+    let serial: Vec<i32> = file_serial_extracted
+        .iter()
+        .map(|s| {
+            s.parse::<i32>().unwrap_or_else(|err| {
+                valid = false;
+                -1
+            })
+        })
+        .collect();
+
+    if valid == false {
+        return Err("invalid name for your migration files")?;
+    }
+
+    let largest = serial.iter().max();
+    let largets_serial = match largest {
+        Some(n) => n,
+        None => &0,
+    }
+    .to_owned();
+
+    let new_serial = largets_serial + 1;
+    let formatted_serial = format!("{:04}", new_serial);
+
+    let migration_name = "./migrations/".to_owned() + &formatted_serial + "_" + name;
+
+    fs::File::create(migration_name)?;
+
+    Ok(())
+}
+
+
+pub fn handl_commands(){
+    
 }
