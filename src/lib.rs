@@ -4,6 +4,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 use serde::Deserializer;
+
 use sqlx::Pool;
 use sqlx::Postgres;
 use sqlx::Row;
@@ -106,10 +107,10 @@ pub async fn table_exists(pool: &Pool<Postgres>) -> Result<bool, Box<dyn Error>>
 pub async fn create_migration_table(pool: &Pool<Postgres>) -> Result<(), Box<dyn Error>> {
     let create_table_sql = "create table db_migrations(
         id serial primary key,
-      name text unique,
-      valid bool not null,
-      created_at timestamp not null DEFAULT now(),
-        deleted_at timestamp not null
+        name text unique,
+        valid bool ,
+        created_at timestamp not null DEFAULT now(),
+        deleted_at timestamp
     );";
 
     sqlx::query(create_table_sql).execute(pool).await?;
@@ -270,14 +271,145 @@ pub fn new_migration(name: &String) -> Result<(), Box<dyn Error>> {
     up_file.write("--Please write your up migrations here".as_bytes())?;
     down_file.write("--Please write your down migrations here".as_bytes())?;
 
+    println!("initialized migration file {}", name);
     Ok(())
 }
 
-pub async fn read_migration_table(pool: &Pool<Postgres>) -> Result<usize, Box<dyn Error>> {
+pub async fn get_migration_table_count(pool: &Pool<Postgres>) -> Result<usize, Box<dyn Error>> {
     let result = sqlx::query("SELECT id from db_migrations")
         .fetch_all(pool)
         .await?;
     let count = result.len();
 
     Ok(count)
+}
+
+fn filter_migration_file(mg_type: &str, mg_files: Vec<String>) -> Vec<String> {
+    mg_files
+        .iter()
+        .filter(|file_name| {
+            let ext: Vec<&str> = file_name.split(".").collect();
+            if let Some(second_last_word) = ext.get(ext.len() - 2) {
+                if second_last_word.to_lowercase() == mg_type {
+                    return true;
+                } else {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        })
+        .map(|s| s.to_string())
+        .collect()
+}
+
+pub async fn up_migration(pool: &Pool<Postgres>, num: i32) -> Result<(), Box<dyn Error>> {
+    let migrations_applied_num = get_migration_table_count(pool).await?;
+
+    let migration_files = read_migration_files()?;
+
+    let mut up_migration_files: Vec<String> = filter_migration_file("up", migration_files);
+
+    up_migration_files.sort();
+
+    let unapplied_migrations: Vec<&String> = up_migration_files
+        .iter()
+        .skip(migrations_applied_num)
+        .collect();
+
+    let migrations_to_apply: i32;
+    if num == -1 {
+        migrations_to_apply = unapplied_migrations.len() as i32;
+    } else {
+        migrations_to_apply = num;
+    }
+
+    let mut tx = pool.begin().await.unwrap();
+
+    for i in 0..migrations_to_apply {
+        let mg = unapplied_migrations[i as usize];
+        let mut name: String = mg.chars().skip(5).collect();
+        name = name.trim_end_matches(".up.sql").to_string();
+
+        let migration_query = fs::read_to_string("./migrations/".to_owned() + mg)?;
+
+        match sqlx::query("INSERT INTO db_migrations(name, valid) VALUES ($1, $2);")
+            .bind(&name)
+            .bind(true)
+            .execute(tx.as_mut())
+            .await
+        {
+            Ok(_) => {}
+            Err(err) => {
+                tx.rollback().await?;
+                return Err(err.into());
+            }
+        }
+
+        match sqlx::query(&migration_query).execute(tx.as_mut()).await {
+            Ok(_) => {
+                println!("applied migration {}", name)
+            }
+            Err(err) => {
+                tx.rollback().await?;
+                return Err(format!("error when migrating {}, {}", name, err))?;
+            }
+        }
+    }
+
+    tx.commit().await?;
+
+    Ok(())
+}
+
+pub async fn down_migration(pool: &Pool<Postgres>, num: i32) -> Result<(), Box<dyn Error>> {
+    let migrations_applied_num = get_migration_table_count(pool).await?;
+
+    let migration_files = read_migration_files()?;
+
+    let mut down_migration_files: Vec<String> = filter_migration_file("down", migration_files);
+
+    down_migration_files.sort();
+
+    let down_migrations: Vec<&String> = down_migration_files
+        .iter()
+        .skip(migrations_applied_num - (num as usize))
+        .take(num as usize)
+        .collect();
+
+    let mut tx = pool.begin().await.unwrap();
+
+    for i in (0..down_migrations.len()).rev() {
+        let mg = down_migrations[i as usize];
+        let mut name: String = mg.chars().skip(5).collect();
+        name = name.trim_end_matches(".down.sql").to_string();
+
+        let migration_query = fs::read_to_string("./migrations/".to_owned() + mg)?;
+
+        match sqlx::query("DELETE from db_migrations where name = $1;")
+            .bind(&name)
+            .execute(tx.as_mut())
+            .await
+        {
+            Ok(_) => {}
+            Err(err) => {
+                tx.rollback().await?;
+                return Err(err.into());
+            }
+        }
+
+        match sqlx::query(&migration_query).execute(tx.as_mut()).await {
+            Ok(_) => {
+                println!("removed migration {}", name)
+            }
+            Err(err) => {
+                tx.rollback().await?;
+                return Err(format!("error when migrating {}, {}", name, err))?;
+            }
+        }
+    }
+
+    tx.commit().await?;
+
+    Ok(())
 }

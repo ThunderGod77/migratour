@@ -2,7 +2,10 @@ use std::error::Error;
 
 use std::{env, process};
 
-use migratour::{create_migration_table, Flags, ping_db, read_config_file, table_exists, Command, new_migration};
+use migratour::{
+    create_migration_table, new_migration, ping_db, read_config_file, table_exists, up_migration,
+    Command, Flags, down_migration,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -25,7 +28,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         });
     }
 
-    
     let  pool = sqlx::postgres::PgPool::connect("postgres://kshitij.360one:sVTezMu4E8YG@ep-shy-king-58645115.ap-southeast-1.aws.neon.tech/neondb?sslmode=require").await?;
 
     ping_db(&pool).await.unwrap_or_else(|err| {
@@ -46,16 +48,29 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     match &f.cmd {
-        Command::New(s )=>{
-            new_migration( &s.clone()).unwrap_or_else(|err|{
-                eprintln!("there is some error in migration files {}",err);
+        Command::New(s) => new_migration(&s.clone()).unwrap_or_else(|err| {
+            eprintln!("there is some error in migration files {}", err);
+            process::exit(1)
+        }),
+        Command::Up(all, n) => {
+            let num: i32;
+            if *all == true {
+                num = -1;
+            } else {
+                num = *n;
+            }
+            up_migration(&pool, num).await.unwrap_or_else(|err| {
+                eprintln!("there was some error when migrating up {}", err);
                 process::exit(1)
             })
         },
-        _ =>{
-
+        Command::Down(n)=>{
+            down_migration(&pool, *n).await.unwrap_or_else(|err| {
+                eprintln!("there was some error when migrating down {}", err);
+                process::exit(1)
+            })
         }
-        
+        _ => {}
     }
 
     Ok(())
