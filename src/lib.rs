@@ -8,6 +8,8 @@ use sqlx::Pool;
 use sqlx::Postgres;
 use sqlx::Row;
 
+use std::io::Write;
+
 use std::fs;
 
 #[derive(Debug)]
@@ -98,8 +100,6 @@ pub async fn table_exists(pool: &Pool<Postgres>) -> Result<bool, Box<dyn Error>>
     let results = sqlx::query(table_exits_sql).fetch_one(pool).await?;
     let tb_exists: bool = results.get("exists");
 
-    dbg!(tb_exists);
-
     Ok(tb_exists)
 }
 
@@ -116,7 +116,7 @@ pub async fn create_migration_table(pool: &Pool<Postgres>) -> Result<(), Box<dyn
 
     Ok(())
 }
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub enum Command {
     Up(bool, i32),
     Down(i32),
@@ -127,7 +127,6 @@ impl Default for Command {
         Command::New(String::default())
     }
 }
-
 
 #[derive(Default)]
 pub struct Flags {
@@ -206,15 +205,8 @@ impl Flags {
     }
 }
 
-pub fn new_migration(name: &String) -> Result<(), Box<dyn Error>> {
-    let mg_folder_exists = Path::new("./migrations").is_dir();
-
-    if !mg_folder_exists {
-        fs::create_dir("./migrations")?;
-    }
-
+pub fn read_migration_files() -> Result<Vec<String>, Box<dyn Error>> {
     let entries = fs::read_dir("./migrations")?;
-
     let file_names: Vec<String> = entries
         .filter_map(|entry| {
             let path = entry.ok()?.path();
@@ -226,6 +218,18 @@ pub fn new_migration(name: &String) -> Result<(), Box<dyn Error>> {
         })
         .collect();
 
+    return Ok(file_names);
+}
+
+pub fn new_migration(name: &String) -> Result<(), Box<dyn Error>> {
+    let mg_folder_exists = Path::new("./migrations").is_dir();
+
+    if !mg_folder_exists {
+        fs::create_dir("./migrations")?;
+    }
+
+    let file_names = read_migration_files()?;
+
     let file_serial_extracted: Vec<String> = file_names
         .iter()
         .map(|s| s.chars().take(4).collect())
@@ -235,7 +239,7 @@ pub fn new_migration(name: &String) -> Result<(), Box<dyn Error>> {
     let serial: Vec<i32> = file_serial_extracted
         .iter()
         .map(|s| {
-            s.parse::<i32>().unwrap_or_else(|err| {
+            s.parse::<i32>().unwrap_or_else(|_| {
                 valid = false;
                 -1
             })
@@ -256,14 +260,24 @@ pub fn new_migration(name: &String) -> Result<(), Box<dyn Error>> {
     let new_serial = largets_serial + 1;
     let formatted_serial = format!("{:04}", new_serial);
 
-    let migration_name = "./migrations/".to_owned() + &formatted_serial + "_" + name;
+    let migration_name_up = "./migrations/".to_owned() + &formatted_serial + "_" + name + ".up.sql";
+    let migration_name_down =
+        "./migrations/".to_owned() + &formatted_serial + "_" + name + ".down.sql";
 
-    fs::File::create(migration_name)?;
+    let mut up_file = fs::File::create(migration_name_up)?;
+    let mut down_file = fs::File::create(migration_name_down)?;
+
+    up_file.write("--Please write your up migrations here".as_bytes())?;
+    down_file.write("--Please write your down migrations here".as_bytes())?;
 
     Ok(())
 }
 
+pub async fn read_migration_table(pool: &Pool<Postgres>) -> Result<usize, Box<dyn Error>> {
+    let result = sqlx::query("SELECT id from db_migrations")
+        .fetch_all(pool)
+        .await?;
+    let count = result.len();
 
-pub fn handl_commands(){
-    
+    Ok(count)
 }
