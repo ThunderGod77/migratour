@@ -3,8 +3,8 @@ use std::error::Error;
 use std::{env, process};
 
 use migratour::{
-    create_migration_table, new_migration, ping_db, read_config_file, table_exists, up_migration,
-    Command, Flags, down_migration,
+    create_migration_table, down_migration, new_migration, ping_db, read_config_file, table_exists,
+    up_migration, Command, Flags,
 };
 
 #[tokio::main]
@@ -63,14 +63,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 eprintln!("there was some error when migrating up {}", err);
                 process::exit(1)
             })
-        },
-        Command::Down(n)=>{
-            down_migration(&pool, *n).await.unwrap_or_else(|err| {
-                eprintln!("there was some error when migrating down {}", err);
-                process::exit(1)
-            })
         }
-        _ => {}
+        Command::Down(n) => down_migration(&pool, *n).await.unwrap_or_else(|err| {
+            eprintln!("there was some error when migrating down {}", err);
+            process::exit(1)
+        }),
     }
 
     Ok(())
