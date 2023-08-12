@@ -1,10 +1,10 @@
 use std::error::Error;
 
 use std::{env, process};
+pub mod postgres_db;
 
 use migratour::{
-    create_migration_table, down_migration, new_migration, ping_db, read_config_file, table_exists,
-    up_migration, Command, Flags,
+    down_migration, new_migration, read_config_file, up_migration, Command, Flags, PostgresDb,
 };
 
 #[tokio::main]
@@ -28,23 +28,31 @@ async fn main() -> Result<(), Box<dyn Error>> {
         });
     }
 
-    let  pool = sqlx::postgres::PgPool::connect("postgres://kshitij.360one:sVTezMu4E8YG@ep-shy-king-58645115.ap-southeast-1.aws.neon.tech/neondb?sslmode=require").await?;
+    let mut db_conn = PostgresDb::new_connection(f.config.database_url)
+        .await
+        .unwrap_or_else(|err| {
+            eprintln!("errot connecting to the database {}", err);
+            process::exit(1);
+        });
 
-    ping_db(&pool).await.unwrap_or_else(|err| {
+    db_conn.ping_db().await.unwrap_or_else(|err| {
         eprintln!("error connecting to the database {}", err);
         process::exit(1);
     });
 
-    let tb_exists = table_exists(&pool).await.unwrap_or_else(|err| {
+    let tb_exists = db_conn.table_exists().await.unwrap_or_else(|err| {
         eprintln!("error connecting to database {}", err);
         process::exit(1);
     });
 
     if !tb_exists {
-        create_migration_table(&pool).await.unwrap_or_else(|err| {
-            eprintln!("error creating database migration table {}", err);
-            process::exit(1);
-        })
+        db_conn
+            .create_migration_table()
+            .await
+            .unwrap_or_else(|err| {
+                eprintln!("error creating database migration table {}", err);
+                process::exit(1);
+            })
     }
 
     match &f.cmd {
@@ -59,15 +67,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
             } else {
                 num = *n;
             }
-            up_migration(&pool, num).await.unwrap_or_else(|err| {
+
+            up_migration(&mut db_conn, num).await.unwrap_or_else(|err| {
                 eprintln!("there was some error when migrating up {}", err);
                 process::exit(1)
             })
         }
-        Command::Down(n) => down_migration(&pool, *n).await.unwrap_or_else(|err| {
-            eprintln!("there was some error when migrating down {}", err);
-            process::exit(1)
-        }),
+        Command::Down(n) => down_migration(&mut db_conn, *n)
+            .await
+            .unwrap_or_else(|err| {
+                eprintln!("there was some error when migrating down {}", err);
+                process::exit(1)
+            }),
     }
 
     Ok(())

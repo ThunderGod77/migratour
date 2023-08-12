@@ -5,8 +5,11 @@ use std::path::Path;
 use serde::Deserialize;
 use serde::Deserializer;
 
-use sqlx::Pool;
 use sqlx::Postgres;
+
+
+use sqlx::Pool;
+
 use sqlx::Row;
 
 use std::io::Write;
@@ -84,39 +87,6 @@ pub fn read_config_file() -> Result<Config, Box<dyn Error>> {
     return Ok(Config::new(db, db_url));
 }
 
-pub async fn ping_db(pool: &Pool<Postgres>) -> Result<(), Box<dyn Error>> {
-    let result = sqlx::query("SELECT 1 + 1 as sum").fetch_one(pool).await?;
-
-    let _s: i32 = result.get("sum");
-
-    Ok(())
-}
-
-pub async fn table_exists(pool: &Pool<Postgres>) -> Result<bool, Box<dyn Error>> {
-    let table_exits_sql = "SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        where  table_name = 'db_migrations'
-        );";
-
-    let results = sqlx::query(table_exits_sql).fetch_one(pool).await?;
-    let tb_exists: bool = results.get("exists");
-
-    Ok(tb_exists)
-}
-
-pub async fn create_migration_table(pool: &Pool<Postgres>) -> Result<(), Box<dyn Error>> {
-    let create_table_sql = "create table db_migrations(
-        id serial primary key,
-        name text unique,
-        valid bool ,
-        created_at timestamp not null DEFAULT now(),
-        deleted_at timestamp
-    );";
-
-    sqlx::query(create_table_sql).execute(pool).await?;
-
-    Ok(())
-}
 #[derive(Debug, Clone)]
 pub enum Command {
     Up(bool, i32),
@@ -275,15 +245,6 @@ pub fn new_migration(name: &String) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-pub async fn get_migration_table_count(pool: &Pool<Postgres>) -> Result<usize, Box<dyn Error>> {
-    let result = sqlx::query("SELECT id from db_migrations")
-        .fetch_all(pool)
-        .await?;
-    let count = result.len();
-
-    Ok(count)
-}
-
 fn filter_migration_file(mg_type: &str, mg_files: Vec<String>) -> Vec<String> {
     mg_files
         .iter()
@@ -303,8 +264,8 @@ fn filter_migration_file(mg_type: &str, mg_files: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-pub async fn up_migration(pool: &Pool<Postgres>, num: i32) -> Result<(), Box<dyn Error>> {
-    let migrations_applied_num = get_migration_table_count(pool).await?;
+pub async fn up_migration(pool: &mut PostgresDb, num: i32) -> Result<(), Box<dyn Error>> {
+    let migrations_applied_num = pool.get_migration_table_count().await?;
 
     let migration_files = read_migration_files()?;
 
@@ -324,7 +285,7 @@ pub async fn up_migration(pool: &Pool<Postgres>, num: i32) -> Result<(), Box<dyn
         migrations_to_apply = num;
     }
 
-    let mut tx = pool.begin().await.unwrap();
+    let mut tx: sqlx::Transaction<'_, Postgres> = pool.new_transaction().await?;
 
     for i in 0..migrations_to_apply {
         let mg = unapplied_migrations[i as usize];
@@ -333,12 +294,7 @@ pub async fn up_migration(pool: &Pool<Postgres>, num: i32) -> Result<(), Box<dyn
 
         let migration_query = fs::read_to_string("./migrations/".to_owned() + mg)?;
 
-        match sqlx::query("INSERT INTO db_migrations(name, valid) VALUES ($1, $2);")
-            .bind(&name)
-            .bind(true)
-            .execute(tx.as_mut())
-            .await
-        {
+        match pool.insert_migration(&name, &mut tx).await {
             Ok(_) => {}
             Err(err) => {
                 tx.rollback().await?;
@@ -346,7 +302,7 @@ pub async fn up_migration(pool: &Pool<Postgres>, num: i32) -> Result<(), Box<dyn
             }
         }
 
-        match sqlx::query(&migration_query).execute(tx.as_mut()).await {
+        match pool.apply_migration(&migration_query, &mut tx).await {
             Ok(_) => {
                 println!("applied migration {}", name)
             }
@@ -362,8 +318,8 @@ pub async fn up_migration(pool: &Pool<Postgres>, num: i32) -> Result<(), Box<dyn
     Ok(())
 }
 
-pub async fn down_migration(pool: &Pool<Postgres>, num: i32) -> Result<(), Box<dyn Error>> {
-    let migrations_applied_num = get_migration_table_count(pool).await?;
+pub async fn down_migration(pool: &mut PostgresDb, num: i32) -> Result<(), Box<dyn Error>> {
+    let migrations_applied_num = pool.get_migration_table_count().await?;
 
     let migration_files = read_migration_files()?;
 
@@ -377,7 +333,7 @@ pub async fn down_migration(pool: &Pool<Postgres>, num: i32) -> Result<(), Box<d
         .take(num as usize)
         .collect();
 
-    let mut tx = pool.begin().await.unwrap();
+    let mut tx = pool.new_transaction().await?;
 
     for i in (0..down_migrations.len()).rev() {
         let mg = down_migrations[i as usize];
@@ -386,11 +342,7 @@ pub async fn down_migration(pool: &Pool<Postgres>, num: i32) -> Result<(), Box<d
 
         let migration_query = fs::read_to_string("./migrations/".to_owned() + mg)?;
 
-        match sqlx::query("DELETE from db_migrations where name = $1;")
-            .bind(&name)
-            .execute(tx.as_mut())
-            .await
-        {
+        match pool.delete_migration(&name, &mut tx).await {
             Ok(_) => {}
             Err(err) => {
                 tx.rollback().await?;
@@ -398,7 +350,7 @@ pub async fn down_migration(pool: &Pool<Postgres>, num: i32) -> Result<(), Box<d
             }
         }
 
-        match sqlx::query(&migration_query).execute(tx.as_mut()).await {
+        match pool.revert_migration(&migration_query, &mut tx).await {
             Ok(_) => {
                 println!("removed migration {}", name)
             }
@@ -412,4 +364,115 @@ pub async fn down_migration(pool: &Pool<Postgres>, num: i32) -> Result<(), Box<d
     tx.commit().await?;
 
     Ok(())
+}
+
+
+
+pub struct PostgresDb {
+    pub pool: Pool<Postgres>,
+}
+
+impl PostgresDb {
+    pub async fn new_connection(database_url: String) -> Result<PostgresDb, Box<dyn Error>> {
+        let pool = sqlx::postgres::PgPool::connect(&database_url).await?;
+
+        return Ok(PostgresDb { pool });
+    }
+
+    pub async fn ping_db(&self) -> Result<(), Box<dyn Error>> {
+        let result = sqlx::query("SELECT 1 + 1 as sum")
+            .fetch_one(&self.pool)
+            .await?;
+
+        let _s: i32 = result.get("sum");
+
+        Ok(())
+    }
+
+    pub async fn table_exists(&self) -> Result<bool, Box<dyn Error>> {
+        let table_exits_sql = "SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            where  table_name = 'db_migrations'
+            );";
+
+        let results = sqlx::query(table_exits_sql).fetch_one(&self.pool).await?;
+        let tb_exists: bool = results.get("exists");
+
+        Ok(tb_exists)
+    }
+
+    pub async fn create_migration_table(&self) -> Result<(), Box<dyn Error>> {
+        let create_table_sql = "create table db_migrations(
+            id serial primary key,
+            name text unique,
+            valid bool ,
+            created_at timestamp not null DEFAULT now(),
+            deleted_at timestamp
+        );";
+
+        sqlx::query(create_table_sql).execute(&self.pool).await?;
+
+        Ok(())
+    }
+
+    pub async fn get_migration_table_count(&self) -> Result<usize, Box<dyn Error>> {
+        let result = sqlx::query("SELECT id from db_migrations")
+            .fetch_all(&self.pool)
+            .await?;
+        let count = result.len();
+
+        Ok(count)
+    }
+
+    pub async fn new_transaction(&self) -> Result<sqlx::Transaction<'_, Postgres>, Box<dyn Error>> {
+        let tx: sqlx::Transaction<'_, Postgres> = self.pool.begin().await?;
+        Ok(tx)
+    }
+
+    pub async fn insert_migration(
+        &self,
+        name: &String,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<(), Box<dyn Error>> {
+        sqlx::query("INSERT INTO db_migrations(name, valid) VALUES ($1, $2);")
+            .bind(&name)
+            .bind(true)
+            .execute(&mut **tx)
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn apply_migration(
+        &self,
+        migration_query: &String,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<(), Box<dyn Error>> {
+        sqlx::query(migration_query).execute(&mut **tx).await?;
+
+        Ok(())
+    }
+
+    pub async fn delete_migration(
+        &self,
+        name: &String,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<(), Box<dyn Error>> {
+        sqlx::query("DELETE from db_migrations where name = $1;")
+            .bind(name)
+            .execute(&mut **tx)
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn revert_migration(
+        &self,
+        migration_query: &String,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<(), Box<dyn Error>> {
+        sqlx::query(&migration_query).execute(&mut **tx).await?;
+
+        Ok(())
+    }
 }
