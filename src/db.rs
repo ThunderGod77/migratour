@@ -19,6 +19,8 @@ pub trait Db {
 
     async fn get_migration_table_count(&self) -> Result<usize, Box<dyn Error>>;
 
+    async fn get_last_migration(&self) -> Result<String, Box<dyn Error>>;
+
     async fn insert_migration(
         &self,
         name: &String,
@@ -112,6 +114,16 @@ impl Db for PostgresDb {
         let count = result.len();
 
         Ok(count)
+    }
+
+    async fn get_last_migration(&self) -> Result<String, Box<dyn Error>> {
+        let result = sqlx::query("Select name from db_migrations order by id desc limit 1;")
+            .fetch_one(&self.pool)
+            .await?;
+
+        let name = result.try_get("name")?;
+
+        Ok(name)
     }
 
     // async fn new_transaction(&self) -> Result<sqlx::Transaction<'_, Postgres>, Box<dyn Error>> {
@@ -302,6 +314,16 @@ impl Db for MySqlDb {
         Ok(count)
     }
 
+    async fn get_last_migration(&self) -> Result<String, Box<dyn Error>> {
+        let result = sqlx::query("Select name from db_migrations order by id desc limit 1;")
+            .fetch_one(&self.pool)
+            .await?;
+
+        let name = result.try_get("name")?;
+
+        Ok(name)
+    }
+
     // async fn new_transaction(&self) -> Result<sqlx::Transaction<'_, Postgres>, Box<dyn Error>> {
     //     let tx: sqlx::Transaction<'_, Postgres> = self.pool.begin().await?;
     //     Ok(tx)
@@ -483,6 +505,14 @@ impl DbExe {
         unapplied_migrations: Vec<&String>,
         migrations_to_apply: i32,
     ) -> Result<(), Box<dyn Error>> {
+        if unapplied_migrations.len() < migrations_to_apply as usize {
+            return Err(format!(
+                "unapplied migrations {} is less than migrations {} to apply",
+                unapplied_migrations.len(),
+                migrations_to_apply
+            ))?;
+        }
+
         match self {
             DbExe::MySqlExe(m) => {
                 m.up_migration_transaction(unapplied_migrations, migrations_to_apply)
@@ -495,6 +525,15 @@ impl DbExe {
         }
 
         Ok(())
+    }
+
+    pub async fn get_last_migration(&self) -> Result<String, Box<dyn Error>> {
+        let name = match self {
+            DbExe::MySqlExe(m) => m.get_last_migration().await?,
+            DbExe::PgExe(pg) => pg.get_last_migration().await?,
+        };
+
+        Ok(name)
     }
 
     pub async fn down_migration_transaction(

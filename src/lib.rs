@@ -93,6 +93,7 @@ pub enum Command {
     Up(bool, i32),
     Down(i32),
     New(String),
+    Last,
 }
 impl Default for Command {
     fn default() -> Self {
@@ -163,6 +164,11 @@ impl Flags {
                     } else {
                         return Err("please enter a valid numeric value for down command")?;
                     }
+                }
+
+                "last" => {
+                    f.cmd = Command::Last;
+                    return Ok(f);
                 }
 
                 _ => {
@@ -301,6 +307,10 @@ pub async fn down_migration(pool: DbExe, num: i32) -> Result<(), Box<dyn Error>>
 
     down_migration_files.sort();
 
+    if migrations_applied_num < num as usize {
+        return Err(format!("number of applied migrations applied {} lesser than the number of migrations to be reverted {}",migrations_applied_num,down_migration_files.len()))?;
+    }
+
     let down_migrations: Vec<&String> = down_migration_files
         .iter()
         .skip(migrations_applied_num - (num as usize))
@@ -309,6 +319,15 @@ pub async fn down_migration(pool: DbExe, num: i32) -> Result<(), Box<dyn Error>>
 
     pool.down_migration_transaction(down_migrations).await?;
 
+    Ok(())
+}
+
+pub async fn last_migration(pool: DbExe) -> Result<(), Box<dyn Error>> {
+    let last_migration_name = pool.get_last_migration().await?;
+    println!(
+        "the last migration applied on the database is {}",
+        last_migration_name
+    );
     Ok(())
 }
 
@@ -380,6 +399,10 @@ pub async fn cmd_run() -> Result<(), Box<dyn Error>> {
             })
         }
         Command::Down(n) => down_migration(db_conn, *n).await.unwrap_or_else(|err| {
+            eprintln!("there was some error when migrating down {}", err);
+            process::exit(1)
+        }),
+        Command::Last => last_migration(db_conn).await.unwrap_or_else(|err| {
             eprintln!("there was some error when migrating down {}", err);
             process::exit(1)
         }),
