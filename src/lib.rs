@@ -94,6 +94,7 @@ pub enum Command {
     Down(i32),
     New(String),
     Last,
+    Num,
 }
 impl Default for Command {
     fn default() -> Self {
@@ -168,6 +169,11 @@ impl Flags {
 
                 "last" => {
                     f.cmd = Command::Last;
+                    return Ok(f);
+                }
+
+                "num" => {
+                    f.cmd = Command::Num;
                     return Ok(f);
                 }
 
@@ -406,6 +412,18 @@ pub async fn cmd_run() -> Result<(), Box<dyn Error>> {
             eprintln!("there was some error when migrating down {}", err);
             process::exit(1)
         }),
+        Command::Num => match db_conn.get_migration_table_count().await {
+            Ok(num) => {
+                println!("{} migrations have been applied", num)
+            }
+            Err(err) => {
+                eprintln!(
+                    "there was saome error counting number of migrations {}",
+                    err
+                );
+                process::exit(1);
+            }
+        },
     }
 
     Ok(())
