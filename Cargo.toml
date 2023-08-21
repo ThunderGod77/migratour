@@ -2,14 +2,28 @@
 name = "migratour"
 version = "0.1.0"
 edition = "2021"
+authors = ["Kshitij Gang <kshitijgang76@gmail.com>"]
+license = "Apache-2.0"
+description = "A very simple database migration tool"
+readme = "README.md"
+homepage = "https://github.com/ThunderGod77/migratour"
+repository = "https://github.com/ThunderGod77/migratour"
+keywords = ["cli", "database", "migration", "postgres", "mysql"]
+categories = ["command-line-utilities"]
+
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.7.6"
-sqlx = { version = "0.7", features = [ "runtime-tokio", "tls-rustls", "postgres", "mysql", "sqlite" ] }
+sqlx = { version = "0.7", features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "mysql",
+    "sqlite",
+] }
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1.73"
 futures = "0.3.28"
-
