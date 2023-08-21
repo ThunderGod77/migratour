@@ -332,7 +332,7 @@ pub async fn cmd_run() -> Result<(), Box<dyn Error>> {
         });
     }
 
-    let  db_conn: DbExe = match f.config.database {
+    let db_conn: DbExe = match f.config.database {
         DatabaseType::MySql => {
             DbExe::MySqlExe(MySqlDb::new_connection(f.config.database_url).await?)
         }

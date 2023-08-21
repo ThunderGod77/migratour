@@ -1,5 +1,7 @@
 use async_trait::async_trait;
+// use futures::stream::StreamExt;
 use sqlx::{Database, MySql, Pool, Postgres, Row};
+
 use std::{error::Error, fs};
 
 #[async_trait]
@@ -136,7 +138,11 @@ impl Db for PostgresDb {
         migration_query: &String,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     ) -> Result<(), Box<dyn Error>> {
-        sqlx::query(migration_query).execute(&mut **tx).await?;
+        let queries: Vec<&str> = migration_query.split(';').collect();
+
+        for query in queries {
+            sqlx::query(query).execute(&mut **tx).await?;
+        }
 
         Ok(())
     }
@@ -159,7 +165,11 @@ impl Db for PostgresDb {
         migration_query: &String,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     ) -> Result<(), Box<dyn Error>> {
-        sqlx::query(&migration_query).execute(&mut **tx).await?;
+        let queries: Vec<&str> = migration_query.split(';').collect();
+
+        for query in queries {
+            sqlx::query(query).execute(&mut **tx).await?;
+        }
 
         Ok(())
     }
@@ -316,7 +326,11 @@ impl Db for MySqlDb {
         migration_query: &String,
         tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
     ) -> Result<(), Box<dyn Error>> {
-        sqlx::query(migration_query).execute(&mut **tx).await?;
+        let queries: Vec<&str> = migration_query.split(';').collect();
+
+        for query in queries {
+            sqlx::query(query).execute(&mut **tx).await?;
+        }
 
         Ok(())
     }
@@ -339,7 +353,11 @@ impl Db for MySqlDb {
         migration_query: &String,
         tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
     ) -> Result<(), Box<dyn Error>> {
-        sqlx::query(&migration_query).execute(&mut **tx).await?;
+        let queries: Vec<&str> = migration_query.split(';').collect();
+
+        for query in queries {
+            sqlx::query(query).execute(&mut **tx).await?;
+        }
 
         Ok(())
     }
@@ -459,53 +477,6 @@ impl DbExe {
     //     let tx: sqlx::Transaction<'_, Postgres> = self.pool.begin().await?;
     //     Ok(tx)
     // }
-
-    pub async fn insert_migration(
-        &self,
-        name: &String,
-        tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
-    ) -> Result<(), Box<dyn Error>> {
-        sqlx::query("INSERT INTO db_migrations(name, valid) VALUES ($1, $2);")
-            .bind(&name)
-            .bind(true)
-            .execute(&mut **tx)
-            .await?;
-
-        Ok(())
-    }
-
-    pub async fn apply_migration(
-        &self,
-        migration_query: &String,
-        tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
-    ) -> Result<(), Box<dyn Error>> {
-        sqlx::query(migration_query).execute(&mut **tx).await?;
-
-        Ok(())
-    }
-
-    pub async fn delete_migration(
-        &self,
-        name: &String,
-        tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
-    ) -> Result<(), Box<dyn Error>> {
-        sqlx::query("DELETE from db_migrations where name = $1;")
-            .bind(name)
-            .execute(&mut **tx)
-            .await?;
-
-        Ok(())
-    }
-
-    pub async fn revert_migration(
-        &self,
-        migration_query: &String,
-        tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
-    ) -> Result<(), Box<dyn Error>> {
-        sqlx::query(&migration_query).execute(&mut **tx).await?;
-
-        Ok(())
-    }
 
     pub async fn up_migration_transaction(
         &self,

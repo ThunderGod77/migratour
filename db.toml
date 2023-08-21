@@ -1,3 +1,3 @@
 # [database]
 database = "postgres"
-database_url = "tcp://"
+database_url = "postgres://hahahbpl:bTjmj3FFrAFB_Vj33sJTlBlicNAPRqwn@rosie.db.elephantsql.com/hahahbpl"
