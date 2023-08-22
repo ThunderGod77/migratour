@@ -1,6 +1,6 @@
 [package]
 name = "migratour"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Kshitij Gang <kshitijgang76@gmail.com>"]
 license = "Apache-2.0"
